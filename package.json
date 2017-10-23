@@ -1,0 +1,21 @@
+{
+  "name": "idempotency-express",
+  "version": "1.0.0",
+  "description": "",
+  "main": "idempotency.js",
+  "scripts": {
+    "test": "./node_modules/.bin/istanbul cover node_modules/.bin/_mocha -- --recursive --reporter mochawesome ./tests/*-test.js && istanbul check-coverage --lines 95"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kobik/express-graceful-shutdown.git"
+  },
+  "keywords": [
+    "idempotency"
+  ],
+  "author": "Sagiv Cohen",
+  "license": "ISC",
+  "dependencies": {
+    "cassandra-driver": "^3.3.0"
+  }
+}
