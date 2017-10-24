@@ -6,7 +6,7 @@ class Database {
 		this.localRepo = repoFactory[repoType];
 	}
 
-	init(repoParams){
+	init(repoParams) {
 		return this.localRepo.init(repoParams);
 	}
 
@@ -14,12 +14,19 @@ class Database {
 		return this.localRepo.openConnection();
 	}
 
-	getPreviousIdempotentFlow(idempotencyContext){
+	getPreviousIdempotentFlow(idempotencyContext) {
 		return this.localRepo.getPreviousIdempotentFlow(idempotencyContext);
 	}
 
-	saveIdempotentFlow(idempotencyContext){
+	createIdempotentFlowRecord(idempotencyContext) {
+		return this.localRepo.createIdempotentFlowRecord(idempotencyContext);
+	}
+
+	saveIdempotentFlow(idempotencyContext) {
 		return this.localRepo.saveIdempotentFlow(idempotencyContext);
+	}
+	saveIdempotentProcessorResponse(idempotencyContext) {
+		return this.localRepo.saveIdempotentProcessorResponse(idempotencyContext);
 	}
 
 	closeConnection() {

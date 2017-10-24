@@ -3,12 +3,14 @@ module.exports = {
 	openConnection: openConnection,
 	closeConnection: closeConnection,
 	getPreviousIdempotentFlow: getPreviousIdempotentFlow,
-	saveIdempotentFlow: saveIdempotentFlow
+	createIdempotentFlowRecord: createIdempotentFlowRecord,
+	saveIdempotentFlow: saveIdempotentFlow,
+	saveIdempotentProcessorResponse: saveIdempotentProcessorResponse
 }
 
 var cassandra = require('cassandra-driver');
 
-var initParams, client;
+var initParams, client, idempotencyTTL;
 var queryOptions = {
 	prepare: true
 };
@@ -62,6 +64,11 @@ function validateParamsInput(params) {
 	if (!params.keyspaceReplication.replicationFactor) {
 		params.keyspaceReplication.replicationFactor = 3;
 	}
+	if (!params.idempotencyTTL) {
+		//TODO: get this value from CONST/DEFAULT file
+		params.idempotencyTTL = 86400;
+	}
+	idempotencyTTL = params.idempotencyTTL;
 
 	return params;
 }
@@ -104,22 +111,6 @@ function createKeyspaceIfNotExists() {
 		" WITH replication = {'class': '" + initParams.keyspaceReplication.class + "', 'replication_factor':" +
 		initParams.keyspaceReplication.replicationFactor + "}";
 
-	// return new Promise(function (resolve, reject) {
-	// 	client.execute(query, null, {
-	// 		prepare: true
-	// 	}, function (err) {
-	// 		if (err) {
-	// 			//TODO: add logger -> failed to execute keyspace creation operation
-	// 			console.log('Failed to create a keyspace');
-	// 			return reject(err);
-	// 		} else {
-	// 			//TODO: add logger -> keyspace creation operation executed successfuly
-	// 			console.log('Keyspace creation executed successfully.');
-	// 			return resolve();
-	// 		}
-	// 	});
-	// });
-
 	return executeQuery(query, null, {
 			prepare: true
 		})
@@ -138,22 +129,6 @@ function createKeyspaceIfNotExists() {
 function createTypeIfNotExists() {
 
 	var query = "CREATE TYPE IF NOT EXISTS response (status_code int, body text);";
-
-	// return new Promise(function (resolve, reject) {
-	// 	client.execute(query, null, {
-	// 		prepare: true
-	// 	}, function (err) {
-	// 		if (err) {
-	// 			//TODO: add logger -> failed to execute cassandra type creation operation
-	// 			console.log('Failed to create a cassandra type');
-	// 			return reject(err);
-	// 		} else {
-	// 			//TODO: add logger -> cassandra type creation operation executed successfuly
-	// 			console.log('Cassandra type creation executed successfully.');
-	// 			return resolve();
-	// 		}
-	// 	});
-	// });
 
 	return executeQuery(query, null, {
 			prepare: true
@@ -177,22 +152,6 @@ function createTableIfNotExists() {
 		" idempotency_key text, method text, url text, proxy_response response, processor_response response," +
 		" PRIMARY KEY (idempotency_key, method, url)) " +
 		" WITH default_time_to_live = 86400;";
-
-	// return new Promise(function (resolve, reject) {
-	// 	client.execute(query, null, {
-	// 		prepare: true
-	// 	}, function (err) {
-	// 		if (err) {
-	// 			//TODO: add logger -> failed to execute table creation operation
-	// 			console.log('Failed to create the table');
-	// 			return reject(err);
-	// 		} else {
-	// 			//TODO: add logger -> table creation operation executed successfuly
-	// 			console.log('Table creation executed successfully.');
-	// 			return resolve();
-	// 		}
-	// 	});
-	// });
 
 	return executeQuery(query, null, {
 			prepare: true
@@ -238,20 +197,43 @@ function getPreviousIdempotentFlow(idempotencyContext) {
 	var query = 'SELECT * from idempotent_responses where idempotency_key=? and method=? and url=?';
 	var queryParams = [idempotencyContext.idempotencyKey, idempotencyContext.endpoint, idempotencyContext.method];
 
-	return new Promise(function (resolve, reject) {
-		client.execute(query, queryParams, queryOptions, function (err, result) {
-			if (err) {
-				//TODO: Add log -> failed to get idempotency flow
-				reject(err);
-			}
-			if (result.rows.length == 0) {
+	return executeQuery(query, queryParams, queryOptions)
+		.then((result) => {
+			if (result.length == 0) {
 				//TODO: Add log -> No idempotency flow was founded
-				resolve(null);
+				return Promise.resolve(null);
 			}
 			//TODO: Add log -> a valid idempotency flow was founded
-			resolve(result.rows[0]);
+			resolve(result[0]);
+		})
+		.catch((error) => {
+			//TODO: Add log -> failed to get idempotency flow
+			return Promise.reject(error);
 		});
-	});
+}
+
+function createIdempotentFlowRecord(idempotencyContext) {
+
+	//TODO: add log -> looking for idempotency key inside cassandra
+	var query = 'INSERT INTO idempotent_responses (idempotency_key, method, url) VALUES (?, ?, ?) IF NOT EXISTS USING TTL ?;';
+	var queryParams = [idempotencyContext.idempotencyKey, idempotencyContext.method, idempotencyContext.endpoint, idempotencyTTL];
+
+	return executeQuery(query, queryParams, queryOptions)
+		.then((result) => {
+			if (!isCreated(result[0])) {
+				return {
+					created: false,
+					record: result[0]
+				};
+			}
+			return {
+				created: true
+			};
+		})
+		.catch((error) => {
+			//TODO: Add log -> failed to create idempotency flow record
+			return Promise.reject(error);
+		});
 }
 
 function saveIdempotentFlow(idempotencyContext) {
@@ -259,19 +241,9 @@ function saveIdempotentFlow(idempotencyContext) {
 	//TODO: add log -> looking for idempotency key inside cassandra
 	var query = 'UPDATE idempotent_responses SET processor_response=?, proxy_response=?' +
 		' WHERE idempotency_key=? and method=? and url=?;';
-	// var queryParams = [idempotencyContext.processorResponse, idempotencyContext.proxyResponse,
-	// 	idempotencyContext.idempotencyKey, idempotencyContext.method, idempotencyContext.endpoint
-	// ];
-	var queryParams = [{
-			status_code: 1,
-			body: null
-		}, {
-			status_code: null,
-			body: null
-		},
+	var queryParams = [idempotencyContext.processorResponse, idempotencyContext.proxyResponse,
 		idempotencyContext.idempotencyKey, idempotencyContext.method, idempotencyContext.endpoint
 	];
-
 
 	return new Promise(function (resolve, reject) {
 		client.execute(query, queryParams, queryOptions, function (err, result) {
@@ -286,7 +258,30 @@ function saveIdempotentFlow(idempotencyContext) {
 	});
 }
 
+function saveIdempotentProcessorResponse(idempotencyContext) {
+	//TODO: add log -> looking for idempotency key inside cassandra
+	var query = 'UPDATE idempotent_responses SET processor_response=?' +
+		' WHERE idempotency_key=? and method=? and url=?;';
+	var queryParams = [idempotencyContext.processorResponse, idempotencyContext.idempotencyKey,
+		idempotencyContext.method, idempotencyContext.endpoint
+	];
 
+	return new Promise(function (resolve, reject) {
+		client.execute(query, queryParams, queryOptions, function (err, result) {
+			if (err) {
+				//TODO: Add log -> failed to save idempotency flow
+				console.log(err.message);
+				reject(err);
+			}
+			//TODO: Add log -> a valid idempotency flow was saved
+			resolve();
+		});
+	});
+}
+
+/*
+handlers
+*/
 function executeQuery(query, params, options) {
 
 	//TODO: add tracing
@@ -299,4 +294,9 @@ function executeQuery(query, params, options) {
 			//TODO: Add log -> query rejected
 			return Promise.reject(new Error(getCassandraError(error)));
 		});
+}
+
+function isCreated(entry) {
+	var applied = String(entry['[applied]']);
+	return applied === 'true';
 }
