@@ -1,3 +1,1 @@
-module.exports = {
-	cassandra: "cassandra"
-}
+module.exports = ["cassandra"]

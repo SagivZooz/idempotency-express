@@ -1,37 +1,51 @@
 var repoFactory = require('./repo-factory');
+var supportedRepos = require('./repo-types');
 
-class Database {
+var localRepo;
 
-	constructor(repoType) {
-		this.localRepo = repoFactory[repoType];
+function init(repoParams) {
+	if (!(repoParams)) {
+		return Promise.reject("Repository params was not provided.");
 	}
-
-	init(repoParams) {
-		return this.localRepo.init(repoParams);
+	if (!validateTypeIsSupported(repoParams.type)) {
+		return Promise.reject("Repository type was not provided or not supported.");
 	}
-
-	openConnection() {
-		return this.localRepo.openConnection();
-	}
-
-	getPreviousIdempotentFlow(idempotencyContext) {
-		return this.localRepo.getPreviousIdempotentFlow(idempotencyContext);
-	}
-
-	createIdempotentFlowRecord(idempotencyContext) {
-		return this.localRepo.createIdempotentFlowRecord(idempotencyContext);
-	}
-
-	saveIdempotentFlow(idempotencyContext) {
-		return this.localRepo.saveIdempotentFlow(idempotencyContext);
-	}
-	saveIdempotentProcessorResponse(idempotencyContext) {
-		return this.localRepo.saveIdempotentProcessorResponse(idempotencyContext);
-	}
-
-	closeConnection() {
-		this.localRepo.closeConnection();
-	}
+	localRepo = repoFactory[repoParams.type];
+	return localRepo.init(repoParams);
 }
 
-module.exports = Database;
+function openConnection() {
+	return localRepo.openConnection();
+}
+
+function getPreviousIdempotentFlow(idempotencyContext) {
+	return localRepo.getPreviousIdempotentFlow(idempotencyContext);
+}
+
+function createIdempotentFlowRecord(idempotencyContext) {
+	return localRepo.createIdempotentFlowRecord(idempotencyContext);
+}
+
+function saveIdempotentFlow(idempotencyContext) {
+	return localRepo.saveIdempotentFlow(idempotencyContext);
+}
+
+function saveIdempotentProcessorResponse(idempotencyContext) {
+	return localRepo.saveIdempotentProcessorResponse(idempotencyContext);
+}
+
+function validateTypeIsSupported(repoType) {
+	if (!supportedRepos.includes(repoType)) {
+		return false;
+	}
+	return true;
+}
+
+module.exports = {
+	init: init,
+	openConnection: openConnection,
+	getPreviousIdempotentFlow: getPreviousIdempotentFlow,
+	createIdempotentFlowRecord: createIdempotentFlowRecord,
+	saveIdempotentFlow: saveIdempotentFlow,
+	saveIdempotentProcessorResponse: saveIdempotentProcessorResponse,
+};

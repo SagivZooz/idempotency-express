@@ -1,6 +1,11 @@
 {
-		"version": "0.2.0",
-		"configurations": [
+	"version": "0.2.0",
+	"configurations": [{
+			"type": "node",
+			"request": "attach",
+			"name": "Attach for mocha",
+			"port": 5858
+		},
 		{
 			"type": "node",
 			"request": "launch",
@@ -13,5 +18,5 @@
 			"name": "Launch test",
 			"program": "${workspaceRoot}/test.js"
 		}
-		]
-	}
+	]
+}

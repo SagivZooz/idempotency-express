@@ -16,7 +16,6 @@ var repoFactory = function () {
 	repoList.forEach(function (repo) {
 		repository[repo.type] = require(repo.source);
 	});
-
 }
 
 module.exports = new repoFactory;

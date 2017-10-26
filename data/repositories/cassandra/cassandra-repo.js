@@ -1,7 +1,7 @@
 module.exports = {
 	init: init,
+	getClient: getClient,
 	openConnection: openConnection,
-	closeConnection: closeConnection,
 	getPreviousIdempotentFlow: getPreviousIdempotentFlow,
 	createIdempotentFlowRecord: createIdempotentFlowRecord,
 	saveIdempotentFlow: saveIdempotentFlow,
@@ -15,62 +15,93 @@ var queryOptions = {
 	prepare: true
 };
 
+
 /*
 Initializations
 */
+
+function getClient() {
+	return client;
+}
+
 function init(params) {
 
 	//TODO: add log -> initiate cassandra connection
 	console.log('Initializing cassandra connection');
 
-	initParams = validateParamsInput(params);
+	return validateInputParams(params)
+		.then(function (result) {
+			initParams = result;
 
-	if (initParams.environmentCreation) {
-		client = buildCassandraClient(null);
-		return createCassandraEnvironment();
-	} else {
-		client = buildCassandraClient(initParams.keyspaceName);
-		return Promise.resolve();
-	}
+			if (initParams.environmentCreation === true) {
+				client = buildCassandraClient(null);
+				return createCassandraEnvironment();
+			} else {
+				client = buildCassandraClient(initParams.keyspaceName);
+				return Promise.resolve();
+			}
+		})
+		.catch((err) => {
+			var msg = 'Failed to init cassandra repository: ' + err;
+			//TODO: add log -> failed to init cassandra repo
+			console.log(msg);
+			return Promise.reject(msg);
+		});
 }
 
-function validateParamsInput(params) {
+function validateInputParams(params) {
 
-	//TODO: check input and throw exception if values are missing or bad.
+	return new Promise(function (resolve, reject) {
+		if (!params.contactPoints || !params.contactPoints.constructor === Array ||
+			params.contactPoints.length <= 0) {
+			//TODO: add log -> error
+			return eject("Invalid or empty arguement was provided. [Argument name: contactPoints]");
+		}
+		if (!params.user || params.user == '') {
+			//TODO: add log -> error
+			return reject("Invalid or empty arguement was provided. [Argument name: user]");
+		}
+		if (!params.password || params.password == '') {
+			//TODO: add log -> error
+			return reject("Invalid or empty arguement was provided. [Argument name: password]");
+		}
+		if (!params.keyspaceName || params.keyspaceName == '') {
+			//TODO: add log -> error
+			return reject("Invalid or empty arguement was provided. [Argument name: keyspaceName]");
+		}
+		if (!params.queryOptions) {
+			params.queryOptions = {
+				consistency: cassandra.types.consistencies.quorum,
+			}
+			queryOptions.consistency = cassandra.types.consistencies.quorum;
+		} else {
+			queryOptions.consistency = params.queryOptions
+		}
+		if (!params.policies) {
+			params.policies = {
+				reconnection: new cassandra.policies.reconnection.ConstantReconnectionPolicy(1000)
+			}
+		}
+		if (!params.keyspaceReplication) {
+			params.keyspaceReplication = {
+				class: 'SimpleStrategy',
+				replicationFactor: 3
+			}
+		}
+		if (!params.keyspaceReplication.class) {
+			params.keyspaceReplication.class = 'SimpleStrategy';
+		}
+		if (!params.keyspaceReplication.replicationFactor) {
+			params.keyspaceReplication.replicationFactor = 3;
+		}
+		if (!params.idempotencyTTL) {
+			//TODO: get this value from CONST/DEFAULT file
+			params.idempotencyTTL = 86400;
+		}
+		idempotencyTTL = params.idempotencyTTL;
 
-	//Set default values if is not defined
-	if (!params.queryOptions) {
-		params.queryOptions = {
-			consistency: cassandra.types.consistencies.quorum,
-		}
-		queryOptions.consistency = cassandra.types.consistencies.quorum;
-	} else {
-		queryOptions.consistency = params.queryOptions
-	}
-	if (!params.policies) {
-		params.policies = {
-			reconnection: new cassandra.policies.reconnection.ConstantReconnectionPolicy(1000)
-		}
-	}
-	if (!params.keyspaceReplication) {
-		params.keyspaceReplication = {
-			class: 'SimpleStrategy',
-			replicationFactor: 3
-		}
-	}
-	if (!params.keyspaceReplication.class) {
-		params.keyspaceReplication.class = 'SimpleStrategy';
-	}
-	if (!params.keyspaceReplication.replicationFactor) {
-		params.keyspaceReplication.replicationFactor = 3;
-	}
-	if (!params.idempotencyTTL) {
-		//TODO: get this value from CONST/DEFAULT file
-		params.idempotencyTTL = 86400;
-	}
-	idempotencyTTL = params.idempotencyTTL;
-
-	return params;
+		resolve(params);
+	});
 }
 
 function buildCassandraClient(keyspace) {
@@ -187,7 +218,6 @@ function closeConnection() {
 	console.log('Closing connection against cassandra');
 }
 
-
 /*
 Idempotency methods
 */
@@ -195,7 +225,7 @@ function getPreviousIdempotentFlow(idempotencyContext) {
 
 	//TODO: add log -> looking for idempotency key inside cassandra
 	var query = 'SELECT * from idempotent_responses where idempotency_key=? and method=? and url=?';
-	var queryParams = [idempotencyContext.idempotencyKey, idempotencyContext.endpoint, idempotencyContext.method];
+	var queryParams = [idempotencyContext.idempotencyKey, idempotencyContext.url, idempotencyContext.url];
 
 	return executeQuery(query, queryParams, queryOptions)
 		.then((result) => {
@@ -216,19 +246,22 @@ function createIdempotentFlowRecord(idempotencyContext) {
 
 	//TODO: add log -> looking for idempotency key inside cassandra
 	var query = 'INSERT INTO idempotent_responses (idempotency_key, method, url) VALUES (?, ?, ?) IF NOT EXISTS USING TTL ?;';
-	var queryParams = [idempotencyContext.idempotencyKey, idempotencyContext.method, idempotencyContext.endpoint, idempotencyTTL];
+	var queryParams = [idempotencyContext.idempotencyKey, idempotencyContext.method, idempotencyContext.url, idempotencyTTL];
 
 	return executeQuery(query, queryParams, queryOptions)
 		.then((result) => {
+			var retValue;
 			if (!isCreated(result[0])) {
-				return {
+				retValue = {
 					created: false,
 					record: result[0]
 				};
 			}
-			return {
+			var retValue = {
 				created: true
 			};
+
+			return Promise.resolve(retValue);
 		})
 		.catch((error) => {
 			//TODO: Add log -> failed to create idempotency flow record
@@ -242,7 +275,7 @@ function saveIdempotentFlow(idempotencyContext) {
 	var query = 'UPDATE idempotent_responses SET processor_response=?, proxy_response=?' +
 		' WHERE idempotency_key=? and method=? and url=?;';
 	var queryParams = [idempotencyContext.processorResponse, idempotencyContext.proxyResponse,
-		idempotencyContext.idempotencyKey, idempotencyContext.method, idempotencyContext.endpoint
+		idempotencyContext.idempotencyKey, idempotencyContext.method, idempotencyContext.url
 	];
 
 	return new Promise(function (resolve, reject) {
@@ -263,7 +296,7 @@ function saveIdempotentProcessorResponse(idempotencyContext) {
 	var query = 'UPDATE idempotent_responses SET processor_response=?' +
 		' WHERE idempotency_key=? and method=? and url=?;';
 	var queryParams = [idempotencyContext.processorResponse, idempotencyContext.idempotencyKey,
-		idempotencyContext.method, idempotencyContext.endpoint
+		idempotencyContext.method, idempotencyContext.url
 	];
 
 	return new Promise(function (resolve, reject) {
@@ -292,7 +325,7 @@ function executeQuery(query, params, options) {
 		})
 		.catch((error) => {
 			//TODO: Add log -> query rejected
-			return Promise.reject(new Error(getCassandraError(error)));
+			return Promise.reject(error);
 		});
 }
 

@@ -1,6 +1,7 @@
 var idempotency = require('./idempotency.js')
 
 var repoInitParams = {
+	type: "cassandra",
 	contactPoints: ["127.0.0.1:9042"],
 	user: "user",
 	password: "user",
@@ -12,63 +13,44 @@ var repoInitParams = {
 	},
 	idempotencyTTL: 86400
 }
-idempotency.initMiddleware("cassandra", repoInitParams, "HeaderKeyName")
+idempotency.initMiddleware(repoInitParams, "HeaderKeyName")
 	.then(() => {
 
+		console.log('Done');
+		// registerPreProcessor();
 
-		// //Regisreting Pre-Processor Event
-		// idempotency.registerPreProcessorFlowEvent(function (req, res, next) {
-		// 	console.log('inside Pre-Processor Event');
-		// 	next();
-		// });
+		// registerPostProcessor();
 
-		//Process request
-		idempotency.processRequest({
-			"headers": {
-				"HeaderKeyName": "ThisIsKey1"
-			},
-			"url": "/payments/123",
-			"method": "POST"
-		}, null, function () {
-			console.log('here is next');
-		});
+		// processRequest();
 
-		//saveIdempotentProcessorResponse();
+		// saveIdempotentProcessorResponse();
 
-		//Process response
-		// idempotency.processResponse({
-		// 	"headers": {
-		// 		"HeaderKeyName": "ThisIsKey1"
-		// 	},
-		// 	"url": "/payments/123",
-		// 	"method": "POST",
-		// 	"": ""
-		// }, {
-		// 	"headers": {
-		// 		"HeaderKeyName": "ThisIsKey1"
-		// 	},
-		// 	"statusCode": 200,
-		// 	"body": "Proxy: Resource created.",
-		// }, function () {
-		// 	console.log('here is next');
-		// });
-
+		// processResponse();
 	})
-	.catch((err) => {
-		console.log('Failed to init middleware');
+	.catch((error) => {
+		console.log('Failed to init idempotency.');
 	});
 
 console.log('Done');
 
 
-
-
+function processRequest() {
+	idempotency.processRequest({
+		"headers": {
+			"HeaderKeyName": "ThisIsKey1"
+		},
+		"url": "/payments/123",
+		"method": "POST"
+	}, null, function () {
+		console.log('here is next');
+	});
+}
 
 function saveIdempotentProcessorResponse() {
 	//Regisreting Pre-Processor Event
 	var context = {
 		"idempotencyKey": "ThisIsKey1",
-		"endpoint": "/payments/123",
+		"url": "/payments/123",
 		"method": "POST",
 		"processorResponse": {
 			status_code: 200,
@@ -83,4 +65,39 @@ function saveIdempotentProcessorResponse() {
 		.catch((error) => {
 			console.log('Failed saveIdempotentProcessorResponse');
 		});
+}
+
+function registerPreProcessor() {
+	//Regisreting Pre-Processor Event
+	idempotency.registerPreProcessorFlowEvent(function (req, res, next) {
+		console.log('inside Pre-Processor Event');
+		next();
+	});
+}
+
+function registerPostProcessor() {
+	//Regisreting Pre-Processor Event
+	idempotency.registerPostProcessorFlowFailedEvent(function (req, res, next) {
+		console.log('inside POST-Processor Event');
+		next();
+	});
+}
+
+function processResponse() {
+	idempotency.processResponse({
+		"headers": {
+			"HeaderKeyName": "ThisIsKey1"
+		},
+		"url": "/payments/123",
+		"method": "POST"
+	}, {
+		"processorResponse": {
+			"status_code": 200,
+			"body": "Processor: Resource created.",
+		},
+		"statusCode": 201,
+		"body": "Proxy: Resource created.",
+	}, function () {
+		console.log('here is next');
+	});
 }
