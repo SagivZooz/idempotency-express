@@ -1,7 +1,67 @@
 var database = require('./data/database');
+var responseHooker = require('./response-hooker');
 
 var idempotencyHeaderKey, supportedEndpoints;
 var preProcessorFlowCallback, postProcessorFlowCallback;
+
+
+/*
+Handlers
+*/
+function initMiddleware(server, repoInitParams, headerKeyName) {
+
+	console.log('Starting middleware initializing.');
+
+	return validateInputParams(repoInitParams, headerKeyName)
+		.then(() => {
+
+			idempotencyHeaderKey = headerKeyName.toLowerCase();
+
+			return database.init(repoInitParams)
+				.then(function () {
+					return database.openConnection();
+				})
+				.then(function () {
+					//TODO: Add log -> Middleware initializing ended successfuly.
+					server.use(responseHooker);
+					console.log('Middleware initializing ended successfuly.');
+					return Promise.resolve();
+				})
+				.catch(function (error) {
+					//TODO: Add log -> Failed initialize middleware.
+					console.log('Failed to init middleware. ');
+					return Promise.reject(error);
+				});
+		});
+}
+
+function validateInputParams(repoInitParams, headerKeyName) {
+	return new Promise(function (resolve, reject) {
+		if (!repoInitParams || !typeof repoInitParams === 'object') {
+			reject("Invalid or empty arguement was provided. [Argument name: repoInitParams]");
+		}
+		if (!headerKeyName || headerKeyName == '') {
+			reject("Invalid or empty arguement was provided. [Argument name: headerKeyName]");
+		}
+		//TODO: support Endpoints
+		resolve();
+	});
+}
+
+function generateIdempotencyContext(req, processorResponse, proxyResponse) {
+	if (!req || !req.headers || !req.url || !req.method) {
+		throw new Error("An invalid req object was provided.");
+	}
+
+	return {
+		"idempotencyKey": req.headers[idempotencyHeaderKey],
+		"url": req.url,
+		"method": req.method,
+		"processorResponse": processorResponse,
+		"proxyResponse": proxyResponse
+	}
+}
+
 
 
 /*
@@ -9,7 +69,12 @@ Request Handling
 */
 function processRequest(req, res, next) {
 
-	idempotencyContext = generateIdempotencyContext(req, null, null);
+	if (!req.headers[idempotencyHeaderKey]) {
+		console.log('Idempotency key was not provided.');
+		return next();
+	}
+
+	var idempotencyContext = generateIdempotencyContext(req, null, null);
 
 	//TODO: validate its a supported operation
 	//TODO: add log -> idempotent request handling process started
@@ -69,7 +134,7 @@ function processResponse(req, res, next) {
 	var processorResponse = (res && res.processorResponse) ? res.processorResponse : null;
 	var proxyResponse = {
 		status_code: res.statusCode,
-		body: res._body
+		body: res.body
 	};
 	var idempotencyContext = generateIdempotencyContext(req, processorResponse, proxyResponse);
 
@@ -77,9 +142,11 @@ function processResponse(req, res, next) {
 	database.saveIdempotentFlow(idempotencyContext)
 		.then(function (response) {
 			console.log('Idempotent flow saved in DB successfuly.');
+			return next();
 		})
 		.catch(function (error) {
 			console.log('Error accured while trying to save idempotency flow: ' + JSON.stringify(error));
+			return next();
 		});
 }
 
@@ -119,61 +186,7 @@ function registerPostProcessorFlowFailedEvent(cb) {
 }
 
 
-/*
-Handlers
-*/
-function initMiddleware(repoInitParams, headerKeyName) {
 
-	console.log('Starting middleware initializing.');
-
-	return validateInputParams(repoInitParams, headerKeyName)
-		.then(() => {
-
-			idempotencyKey = idempotencyHeaderKey;
-
-			return database.init(repoInitParams)
-				.then(function () {
-					return database.openConnection();
-				})
-				.then(function () {
-					//TODO: Add log -> Middleware initializing ended successfuly.
-					console.log('Middleware initializing ended successfuly.');
-					return Promise.resolve();
-				})
-				.catch(function (error) {
-					//TODO: Add log -> Failed initialize middleware.
-					console.log('Failed to init middleware. ');
-					return Promise.reject(error);
-				});
-		});
-}
-
-function validateInputParams(repoInitParams, headerKeyName) {
-	return new Promise(function (resolve, reject) {
-		if (!repoInitParams || !typeof repoInitParams === 'object') {
-			reject("Invalid or empty arguement was provided. [Argument name: repoInitParams]");
-		}
-		if (!headerKeyName || headerKeyName == '') {
-			reject("Invalid or empty arguement was provided. [Argument name: headerKeyName]");
-		}
-		//TODO: support Endpoints
-		resolve();
-	});
-}
-
-function generateIdempotencyContext(req, processorResponse, proxyResponse) {
-	if (!req || !req.headers || !req.url || !req.method) {
-		throw new Error("An invalid req object was provided.");
-	}
-
-	return {
-		"idempotencyKey": req.headers[idempotencyHeaderKey],
-		"url": req.url,
-		"method": req.method,
-		"processorResponse": processorResponse,
-		"proxyResponse": proxyResponse
-	}
-}
 
 module.exports = {
 	initMiddleware: initMiddleware,

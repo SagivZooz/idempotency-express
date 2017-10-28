@@ -1,6 +1,6 @@
 {
   "name": "idempotency-express",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "",
   "main": "idempotency.js",
   "scripts": {
@@ -8,7 +8,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/kobik/express-graceful-shutdown.git"
+    "url": "https://github.com/SagivZooz/idempotency-express"
   },
   "keywords": [
     "idempotency"
@@ -16,6 +16,7 @@
   "author": "Sagiv Cohen",
   "license": "ISC",
   "dependencies": {
-    "cassandra-driver": "^3.3.0"
+    "cassandra-driver": "^3.3.0",
+    "express-mung": "^0.4.6"
   }
 }
