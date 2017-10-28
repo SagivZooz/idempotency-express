@@ -8,22 +8,23 @@ var preProcessorFlowCallback, postProcessorFlowCallback;
 /*
 Handlers
 */
-function initMiddleware(server, repoInitParams, headerKeyName) {
+function initMiddleware(params) {
 
 	console.log('Starting middleware initializing.');
 
-	return validateInputParams(repoInitParams, headerKeyName)
+	return validateInputParams(params)
 		.then(() => {
 
-			idempotencyHeaderKey = headerKeyName.toLowerCase();
+			idempotencyHeaderKey = params.headerKeyName.toLowerCase();
 
-			return database.init(repoInitParams)
+			return database.init(params.repoInitParams)
 				.then(function () {
 					return database.openConnection();
 				})
 				.then(function () {
 					//TODO: Add log -> Middleware initializing ended successfuly.
-					server.use(responseHooker);
+					params.server.use(responseHooker);
+
 					console.log('Middleware initializing ended successfuly.');
 					return Promise.resolve();
 				})
@@ -35,12 +36,15 @@ function initMiddleware(server, repoInitParams, headerKeyName) {
 		});
 }
 
-function validateInputParams(repoInitParams, headerKeyName) {
+function validateInputParams(params) {
 	return new Promise(function (resolve, reject) {
-		if (!repoInitParams || !typeof repoInitParams === 'object') {
+		if (!params.server || !typeof params.server === 'object') {
+			reject("Invalid or empty arguement was provided. [Argument name: server]");
+		}
+		if (!params.repoInitParams || !typeof params.repoInitParams === 'object') {
 			reject("Invalid or empty arguement was provided. [Argument name: repoInitParams]");
 		}
-		if (!headerKeyName || headerKeyName == '') {
+		if (!params.headerKeyName || params.headerKeyName == '') {
 			reject("Invalid or empty arguement was provided. [Argument name: headerKeyName]");
 		}
 		//TODO: support Endpoints
@@ -136,6 +140,11 @@ function processResponse(req, res, next) {
 		status_code: res.statusCode,
 		body: res.body
 	};
+	if(proxyResponse && proxyResponse.body && typeof proxyResponse.body === 'object')
+	{
+		proxyResponse.body = JSON.stringify(proxyResponse.body);
+	}
+
 	var idempotencyContext = generateIdempotencyContext(req, processorResponse, proxyResponse);
 
 	//TODO: add log -> idempotent response handling process started
