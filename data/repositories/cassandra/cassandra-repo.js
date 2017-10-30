@@ -9,6 +9,7 @@ module.exports = {
 }
 
 var cassandra = require('cassandra-driver');
+var logger = require('../../../logger-wrapper');
 
 var initParams, client, idempotencyTTL;
 var queryOptions = {
@@ -27,13 +28,14 @@ function getClient() {
 function init(params) {
 
 	//TODO: add log -> initiate cassandra connection
-	console.log('Initializing cassandra connection');
+	logger.getInstance().trace('Initializing cassandra repository');
 
 	return validateInputParams(params)
 		.then(function (result) {
 			initParams = result;
 
 			if (initParams.environmentCreation === true) {
+				logger.getInstance().trace('Creating (if not exist) cassandra environment');
 				client = buildCassandraClient(null);
 				return createCassandraEnvironment();
 			} else {
@@ -41,11 +43,12 @@ function init(params) {
 				return Promise.resolve();
 			}
 		})
-		.catch((err) => {
-			var msg = 'Failed to init cassandra repository: ' + err;
-			//TODO: add log -> failed to init cassandra repo
-			console.log(msg);
-			return Promise.reject(msg);
+		.catch((error) => {
+			var errorObj = {
+				message: 'Failed to init cassandra repository',
+				error: error
+			}
+			return Promise.reject(errorObj);
 		});
 }
 
@@ -146,14 +149,15 @@ function createKeyspaceIfNotExists() {
 			prepare: true
 		})
 		.then(() => {
-			//TODO: add logger -> keyspace creation operation executed successfuly
-			console.log('Keyspace creation executed successfully.');
+			logger.getInstance().trace('Keyspace creation executed successfully.');
 			return Promise.resolve();
 		})
 		.catch((error) => {
-			//TODO: add logger -> failed to execute keyspace creation operation
-			console.log('Failed to create a keyspace');
-			return Promise.reject(error);
+			var errorObj = {
+				message: 'Failed to create cassandra environment [Keyspace].',
+				error: error
+			}
+			return Promise.reject(errorObj);
 		});
 }
 
@@ -165,14 +169,15 @@ function createTypeIfNotExists() {
 			prepare: true
 		})
 		.then(() => {
-			//TODO: add logger -> cassandra type creation operation executed successfuly
-			console.log('Cassandra type creation executed successfully.');
+			logger.getInstance().trace('Cassandra type creation executed successfully.');
 			return Promise.resolve();
 		})
 		.catch((error) => {
-			//TODO: add logger -> failed to execute cassandra type creation operation
-			console.log('Failed to create a cassandra type');
-			return Promise.reject(error);
+			var errorObj = {
+				message: 'Failed to create a cassandra type.',
+				error: error
+			}
+			return Promise.reject(errorObj);
 		});
 }
 
@@ -188,14 +193,15 @@ function createTableIfNotExists() {
 			prepare: true
 		})
 		.then(() => {
-			//TODO: add logger -> table creation operation executed successfuly
-			console.log('Table creation executed successfully.');
+			logger.getInstance().trace('Table creation executed successfully.');
 			return Promise.resolve();
 		})
 		.catch((error) => {
-			//TODO: add logger -> failed to execute table creation operation
-			console.log('Failed to create the table');
-			return Promise.reject(err);
+			var errorObj = {
+				message: 'Failed to create the table.',
+				error: error
+			}
+			return Promise.reject(errorObj);
 		});
 }
 
@@ -203,48 +209,48 @@ function openConnection() {
 
 	return client.connect()
 		.then(() => {
-			//TODO: add log -> Connected to cassandra successfully
-			console.log('Connected to cassandra successfully');
+			logger.getInstance().trace('Connected to cassandra successfully.');
 			return Promise.resolve();
 		})
 		.catch((error) => {
-			//TODO: add log -> Failed connecting to cassandra
-			// return Promise.reject(new Error('SERVICE_UNAVAILABLE'));
-			return Promise.reject(error);
+			var errorObj = {
+				message: 'Failed to open connection against cassandra.',
+				error: error
+			}
+			return Promise.reject(errorObj);
 		});
 }
 
-function closeConnection() {
-	console.log('Closing connection against cassandra');
-}
 
 /*
 Idempotency methods
 */
 function getPreviousIdempotentFlow(idempotencyContext) {
 
-	//TODO: add log -> looking for idempotency key inside cassandra
+	logger.getInstance().trace('Getting idompotent flow. IdempotencyKey[' + idempotencyContext.idempotencyKey + ']');
+
 	var query = 'SELECT * from idempotent_responses where idempotency_key=? and method=? and url=?';
 	var queryParams = [idempotencyContext.idempotencyKey, idempotencyContext.url, idempotencyContext.url];
 
 	return executeQuery(query, queryParams, queryOptions)
 		.then((result) => {
 			if (result.length == 0) {
-				//TODO: Add log -> No idempotency flow was founded
+				logger.getInstance().trace('No idempotency flow was founded. IdempotencyKey[' + idempotencyContext.idempotencyKey + ']');
 				return Promise.resolve(null);
 			}
-			//TODO: Add log -> a valid idempotency flow was founded
+			logger.getInstance().trace('A valid idempotency flow was founded. IdempotencyKey[' + idempotencyContext.idempotencyKey + ']');
 			resolve(result[0]);
 		})
 		.catch((error) => {
-			//TODO: Add log -> failed to get idempotency flow
+			//TODO: logger.error -> failed to get idempotency flow
 			return Promise.reject(error);
 		});
 }
 
 function createIdempotentFlowRecord(idempotencyContext) {
 
-	//TODO: add log -> looking for idempotency key inside cassandra
+	logger.getInstance().trace('Creating idempotent flow record in cassandra. IdempotencyKey[' + idempotencyContext.idempotencyKey + ']');
+
 	var query = 'INSERT INTO idempotent_responses (idempotency_key, method, url) VALUES (?, ?, ?) IF NOT EXISTS USING TTL ?;';
 	var queryParams = [idempotencyContext.idempotencyKey, idempotencyContext.method, idempotencyContext.url, idempotencyTTL];
 
@@ -256,22 +262,24 @@ function createIdempotentFlowRecord(idempotencyContext) {
 					created: false,
 					record: result[0]
 				};
+			} else {
+				retValue = {
+					created: true
+				};
 			}
-			var retValue = {
-				created: true
-			};
 
 			return Promise.resolve(retValue);
 		})
 		.catch((error) => {
-			//TODO: Add log -> failed to create idempotency flow record
+			//TODO: add log
 			return Promise.reject(error);
 		});
 }
 
 function saveIdempotentFlow(idempotencyContext) {
 
-	//TODO: add log -> looking for idempotency key inside cassandra
+	logger.getInstance().trace('Saving idempotent flow in cassandra. IdempotencyKey[' + idempotencyContext.idempotencyKey + ']');
+
 	var query = 'UPDATE idempotent_responses SET processor_response=?, proxy_response=?' +
 		' WHERE idempotency_key=? and method=? and url=?;';
 	var queryParams = [idempotencyContext.processorResponse, idempotencyContext.proxyResponse,
@@ -279,20 +287,18 @@ function saveIdempotentFlow(idempotencyContext) {
 	];
 
 	return new Promise(function (resolve, reject) {
-		client.execute(query, queryParams, queryOptions, function (err, result) {
-			if (err) {
-				//TODO: Add log -> failed to save idempotency flow
-				console.log(err.message);
-				reject(err);
+		client.execute(query, queryParams, queryOptions, function (error, result) {
+			if (error) {
+				reject(error);
 			}
-			//TODO: Add log -> a valid idempotency flow was saved
 			resolve();
 		});
 	});
 }
 
 function saveIdempotentProcessorResponse(idempotencyContext) {
-	//TODO: add log -> looking for idempotency key inside cassandra
+	logger.getInstance().trace('Saving idempotent processor response in cassandra. IdempotencyKey[' + idempotencyContext.idempotencyKey + ']');
+
 	var query = 'UPDATE idempotent_responses SET processor_response=?' +
 		' WHERE idempotency_key=? and method=? and url=?;';
 	var queryParams = [idempotencyContext.processorResponse, idempotencyContext.idempotencyKey,
@@ -301,12 +307,9 @@ function saveIdempotentProcessorResponse(idempotencyContext) {
 
 	return new Promise(function (resolve, reject) {
 		client.execute(query, queryParams, queryOptions, function (err, result) {
-			if (err) {
-				//TODO: Add log -> failed to save idempotency flow
-				console.log(err.message);
-				reject(err);
+			if (error) {
+				reject(error);
 			}
-			//TODO: Add log -> a valid idempotency flow was saved
 			resolve();
 		});
 	});
@@ -317,14 +320,11 @@ handlers
 */
 function executeQuery(query, params, options) {
 
-	//TODO: add tracing
 	return client.execute(query, params, options)
 		.then((result) => {
-			//TODO: Add log -> Trace
 			return result.rows;
 		})
 		.catch((error) => {
-			//TODO: Add log -> query rejected
 			return Promise.reject(error);
 		});
 }

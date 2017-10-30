@@ -8,7 +8,8 @@ var sinon = require('sinon'),
 	rewire = require('rewire');
 
 var idempotency = require('../../../idempotency'),
-	database = require('../../../data/database');
+	database = require('../../../data/database'),
+	logger = require('../../../logger-wrapper');
 
 chai.use(chai_sinon);
 chai.use(chai_as_promised);
@@ -18,10 +19,37 @@ var assert = chai.assert;
 
 describe('Idempotency Middleware Tests', function () {
 
+	var initParams = {
+		server: {
+			use: function () {}
+		},
+		headerKeyName: "idemHeaderKeyName",
+		repoInitParams: {},
+		loggerParams: {
+			logger: {
+				trace: function () {},
+				info: function () {},
+				error: function () {}
+			}
+		}
+	}
+
 	describe('initMiddleware', function () {
 
+		it('should reject and return error if server is not provided', function () {
+			return idempotency.initMiddleware({})
+				.then(() => {
+					throw new Error('Expected method to reject.');
+				})
+				.catch((error) => {
+					expect(error).to.not.equal(null);
+				});
+		});
+
 		it('should reject and return error if repoParams is not provided', function () {
-			return idempotency.initMiddleware(null, "idemHeaderKeyName")
+			return idempotency.initMiddleware({
+					server: {}
+				})
 				.then(() => {
 					throw new Error('Expected method to reject.');
 				})
@@ -31,7 +59,41 @@ describe('Idempotency Middleware Tests', function () {
 		});
 
 		it('should reject and return error if idempotencyHeaderKeyName is not provided', function () {
-			return idempotency.initMiddleware(null, null)
+			return idempotency.initMiddleware({
+					server: {},
+					repoInitParams: {}
+				})
+				.then(() => {
+					throw new Error('Expected method to reject.');
+				})
+				.catch((error) => {
+					expect(error).to.not.equal(null);
+				});
+		});
+
+		it('should reject and return error if logger is not provided', function () {
+			return idempotency.initMiddleware({
+					server: {},
+					repoInitParams: {},
+					headerKeyName: 'abc'
+				})
+				.then(() => {
+					throw new Error('Expected method to reject.');
+				})
+				.catch((error) => {
+					expect(error).to.not.equal(null);
+				});
+		});
+
+		it('should reject and return error if logger is not implement required functions', function () {
+			return idempotency.initMiddleware({
+					server: {},
+					repoInitParams: {},
+					headerKeyName: 'abc',
+					loggerParams: {
+						logger: {}
+					}
+				})
 				.then(() => {
 					throw new Error('Expected method to reject.');
 				})
@@ -45,7 +107,8 @@ describe('Idempotency Middleware Tests', function () {
 			var dbInitStub = sinon.stub(database, "init").resolves();
 			var dbOpenConnectionStub = sinon.stub(database, "openConnection").resolves();
 
-			return idempotency.initMiddleware({}, "idemHeaderKeyName")
+
+			return idempotency.initMiddleware(initParams)
 				.then(() => {
 					expect(dbInitStub.called).to.equal(true);
 					expect(dbOpenConnectionStub.called).to.equal(true);
@@ -59,7 +122,7 @@ describe('Idempotency Middleware Tests', function () {
 
 			var dbInitStub = sinon.stub(database, "init").rejects();
 
-			return idempotency.initMiddleware({}, "idemHeaderKeyName")
+			return idempotency.initMiddleware(initParams)
 				.catch((error) => {
 					expect(dbInitStub.called).to.equal(true);
 					expect(error).to.not.equal(null);
@@ -73,7 +136,7 @@ describe('Idempotency Middleware Tests', function () {
 			var dbInitStub = sinon.stub(database, "init").resolves();
 			var dbOpenConnectionStub = sinon.stub(database, "openConnection").rejects();
 
-			return idempotency.initMiddleware({}, "idemHeaderKeyName")
+			return idempotency.initMiddleware(initParams)
 				.catch((error) => {
 					expect(dbInitStub.called).to.equal(true);
 					expect(dbOpenConnectionStub.called).to.equal(true);
@@ -106,69 +169,101 @@ describe('Idempotency Middleware Tests', function () {
 	});
 
 	describe('processRequest', function () {
-		it('should throw an error if the given Request is null', function () {
-			expect(() => {
-				idempotency.processRequest(null, null, null)
-			}).to.throw(Error);
+
+		var dbInitStub, dbConnectStub, loggerStub;
+
+		beforeEach(function () {
+			dbInitStub = sinon.stub(database, "init").resolves();
+			dbConnectStub = sinon.stub(database, "openConnection").resolves();
+			loggerStub = sinon.stub(logger, "getInstance").returns({
+				trace: function () {},
+				info: function () {},
+				error: function () {}
+			});
+		});
+		afterEach(function () {
+			dbInitStub.restore();
+			dbConnectStub.restore();
+			loggerStub.restore();
+		});
+
+		it('should skip the idempotency record creation if the given Request has no key header', function () {
+			var dbStub = sinon.stub(database, "createIdempotentFlowRecord").resolves();
+
+			idempotency.processRequest({
+				"headers": {},
+				"url": "/payments/123",
+				"method": "POST"
+			}, null, function () {});
+
+			expect(dbStub.called).to.equal(false);
+
+			dbStub.restore();
 		});
 		it('should create an idempotency record if the given Request is valid', function () {
 			var dbStub = sinon.stub(database, "createIdempotentFlowRecord").resolves();
 
-			idempotency.processRequest({
-				"headers": {
-					"HeaderKeyName": "ThisIsKey1"
-				},
-				"url": "/payments/123",
-				"method": "POST"
-			}, null, null);
+			return idempotency.initMiddleware(initParams)
+				.then(() => {
+					idempotency.processRequest({
+						"headers": {
+							"idemheaderkeyname": "ThisIsKey1"
+						},
+						"url": "/payments/123",
+						"method": "POST"
+					}, null, function () {});
 
-			expect(dbStub.called).to.equal(true);
+					expect(dbStub.called).to.equal(true);
 
-			dbStub.restore();
+					dbStub.restore();
+				});
 		});
 		it('should call \'PreProcessor\' event if it was registered', function (done) {
 			var dbStub = sinon.stub(database, "createIdempotentFlowRecord").resolves();
-			var preProcessorEvent = function (req, res, next) {
-
-			};
+			var preProcessorEvent = function (req, res, next) {};
 			var eventStub = sinon.spy(preProcessorEvent);
 
 			idempotency.registerPreProcessorFlowEvent(eventStub);
-			idempotency.processRequest({
-				"headers": {
-					"HeaderKeyName": "ThisIsKey1"
-				},
-				"url": "/payments/123",
-				"method": "POST"
-			}, null, null);
 
-			setTimeout(function () {
-				expect(eventStub.called).to.equal(true);
-				dbStub.restore();
-				idempotency = rewire('../../../idempotency');
-				done();
-			}, 10);
+			idempotency.initMiddleware(initParams)
+				.then(() => {
+					idempotency.processRequest({
+						"headers": {
+							"idemheaderkeyname": "ThisIsKey1"
+						},
+						"url": "/payments/123",
+						"method": "POST"
+					}, null, null);
+
+					setTimeout(function () {
+						expect(eventStub.called).to.equal(true);
+						dbStub.restore();
+						idempotency = rewire('../../../idempotency');
+						done();
+					}, 10);
+				});
 		});
 		it('should NOT call \'PreProcessor\' event if it was registered', function (done) {
 			var dbStub = sinon.stub(database, "createIdempotentFlowRecord").resolves();
-			var preProcessorEvent = function (req, res, next) {
-
-			};
+			var preProcessorEvent = function (req, res, next) {};
 			var eventStub = sinon.spy(preProcessorEvent);
 
-			idempotency.processRequest({
-				"headers": {
-					"HeaderKeyName": "ThisIsKey1"
-				},
-				"url": "/payments/123",
-				"method": "POST"
-			}, null, null);
+			idempotency.initMiddleware(initParams)
+				.then(() => {
+					idempotency.processRequest({
+						"headers": {
+							"idemheaderkeyname": "ThisIsKey1"
+						},
+						"url": "/payments/123",
+						"method": "POST"
+					}, null, null);
 
-			setTimeout(function () {
-				expect(eventStub.called).to.equal(false);
-				dbStub.restore();
-				done();
-			}, 10);
+					setTimeout(function () {
+						expect(eventStub.called).to.equal(false);
+						dbStub.restore();
+						done();
+					}, 10);
+				});
 		});
 		it('should call next function if it is the first request in the middleware', function (done) {
 			var dbStub = sinon.stub(database, "createIdempotentFlowRecord").resolves({
@@ -177,19 +272,22 @@ describe('Idempotency Middleware Tests', function () {
 			var nextEvent = function () {};
 			var eventStub = sinon.spy(nextEvent);
 
-			idempotency.processRequest({
-				"headers": {
-					"HeaderKeyName": "ThisIsKey1"
-				},
-				"url": "/payments/123",
-				"method": "POST"
-			}, null, eventStub);
+			idempotency.initMiddleware(initParams)
+				.then(() => {
+					idempotency.processRequest({
+						"headers": {
+							"idemheaderkeyname": "ThisIsKey1"
+						},
+						"url": "/payments/123",
+						"method": "POST"
+					}, null, eventStub);
 
-			setTimeout(function () {
-				expect(eventStub.called).to.equal(true);
-				dbStub.restore();
-				done();
-			}, 10);
+					setTimeout(function () {
+						expect(eventStub.called).to.equal(true);
+						dbStub.restore();
+						done();
+					}, 10);
+				});
 		});
 		it('should Not call next function if it is NOT the first request in the middleware', function (done) {
 			var dbStub = sinon.stub(database, "createIdempotentFlowRecord").resolves({
@@ -198,19 +296,26 @@ describe('Idempotency Middleware Tests', function () {
 			var nextEvent = function () {};
 			var eventStub = sinon.spy(nextEvent);
 
-			idempotency.processRequest({
-				"headers": {
-					"HeaderKeyName": "ThisIsKey1"
-				},
-				"url": "/payments/123",
-				"method": "POST"
-			}, null, eventStub);
+			idempotency.initMiddleware(initParams)
+				.then(() => {
+					idempotency.processRequest({
+						"headers": {
+							"idemheaderkeyname": "ThisIsKey1"
+						},
+						"url": "/payments/123",
+						"method": "POST"
+					}, {
+						status: function () {},
+						json: function () {}
+					}, eventStub);
 
-			setTimeout(function () {
-				expect(eventStub.called).to.equal(false);
-				dbStub.restore();
-				done();
-			}, 10);
+					setTimeout(function () {
+						expect(eventStub.called).to.equal(false);
+
+						dbStub.restore();
+						done();
+					}, 10);
+				});
 		});
 		it('should return proxy response if there is a saved response belong to this idempotency key', function (done) {
 			var returnedResponse = {
@@ -233,23 +338,26 @@ describe('Idempotency Middleware Tests', function () {
 				json: resJsonFunction
 			}
 
-			idempotency.processRequest({
-				"headers": {
-					"HeaderKeyName": "ThisIsKey1"
-				},
-				"url": "/payments/123",
-				"method": "POST"
-			}, res, nextEventStub);
+			idempotency.initMiddleware(initParams)
+				.then(() => {
+					idempotency.processRequest({
+						"headers": {
+							"idemheaderkeyname": "ThisIsKey1"
+						},
+						"url": "/payments/123",
+						"method": "POST"
+					}, res, nextEventStub);
 
-			setTimeout(function () {
-				expect(nextEventStub.called).to.equal(false);
-				expect(resStatusFunction.called).to.equal(true);
-				expect(resStatusFunction.getCall(0).args[0]).to.equal(returnedResponse.record.proxy_response.status_code);
-				expect(resJsonFunction.called).to.equal(true);
-				expect(resJsonFunction.getCall(0).args[0]).to.equal(returnedResponse.record.proxy_response.body);
-				dbStub.restore();
-				done();
-			}, 10);
+					setTimeout(function () {
+						expect(nextEventStub.called).to.equal(false);
+						expect(resStatusFunction.called).to.equal(true);
+						expect(resStatusFunction.getCall(0).args[0]).to.equal(returnedResponse.record.proxy_response.status_code);
+						expect(resJsonFunction.called).to.equal(true);
+						expect(resJsonFunction.getCall(0).args[0]).to.equal(returnedResponse.record.proxy_response.body);
+						dbStub.restore();
+						done();
+					}, 10);
+				});
 		});
 		it('should call \'PostProcessor\' event if it was registered', function (done) {
 			var returnedResponse = {
@@ -266,20 +374,23 @@ describe('Idempotency Middleware Tests', function () {
 
 			idempotency.registerPostProcessorFlowFailedEvent(postProcessorEvent);
 
-			idempotency.processRequest({
-				"headers": {
-					"HeaderKeyName": "ThisIsKey1"
-				},
-				"url": "/payments/123",
-				"method": "POST"
-			}, null, null);
+			idempotency.initMiddleware(initParams)
+				.then(() => {
+					idempotency.processRequest({
+						"headers": {
+							"idemheaderkeyname": "ThisIsKey1"
+						},
+						"url": "/payments/123",
+						"method": "POST"
+					}, null, null);
 
-			setTimeout(function () {
-				expect(postProcessorEvent.called).to.equal(true);
-				dbStub.restore();
-				idempotency = rewire('../../../idempotency');
-				done();
-			}, 10);
+					setTimeout(function () {
+						expect(postProcessorEvent.called).to.equal(true);
+						dbStub.restore();
+						idempotency = rewire('../../../idempotency');
+						done();
+					}, 10);
+				});
 		});
 		it('should return error if there is a uncompleted saved response belong to this idempotency key', function (done) {
 			var returnedResponse = {
@@ -302,23 +413,26 @@ describe('Idempotency Middleware Tests', function () {
 				json: resJsonFunction
 			}
 
-			idempotency.processRequest({
-				"headers": {
-					"HeaderKeyName": "ThisIsKey1"
-				},
-				"url": "/payments/123",
-				"method": "POST"
-			}, res, nextEventStub);
+			idempotency.initMiddleware(initParams)
+				.then(() => {
+					idempotency.processRequest({
+						"headers": {
+							"idemheaderkeyname": "ThisIsKey1"
+						},
+						"url": "/payments/123",
+						"method": "POST"
+					}, res, nextEventStub);
 
-			setTimeout(function () {
-				expect(nextEventStub.called).to.equal(false);
-				expect(resStatusFunction.called).to.equal(true);
-				expect(resStatusFunction.getCall(0).args[0]).to.equal(409);
-				expect(resJsonFunction.called).to.equal(true);
-				expect(resJsonFunction.getCall(0).args[0].error).to.equal("Failed to operate request during to idempotency key");
-				dbStub.restore();
-				done();
-			}, 10);
+					setTimeout(function () {
+						expect(nextEventStub.called).to.equal(false);
+						expect(resStatusFunction.called).to.equal(true);
+						expect(resStatusFunction.getCall(0).args[0]).to.equal(409);
+						expect(resJsonFunction.called).to.equal(true);
+						expect(resJsonFunction.getCall(0).args[0].error).to.equal("Failed to process request during to uncompleted idempotent flow");
+						dbStub.restore();
+						done();
+					}, 10);
+				});
 		});
 	});
 
@@ -343,7 +457,7 @@ describe('Idempotency Middleware Tests', function () {
 
 			idempotency.processResponse({
 				"headers": {
-					"HeaderKeyName": "ThisIsKey1"
+					"idemheaderkeyname": "ThisIsKey1"
 				},
 				"url": "/payments/123",
 				"method": "POST"
